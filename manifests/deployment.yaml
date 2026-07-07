@@ -1,0 +1,27 @@
+apiVersion: apps/v1        # Tells Kubernetes we're using the apps/v1 API (needed for Deployments)
+kind: Deployment           # We're creating a Deployment object (manages Pods + replicas)
+metadata:                  # Info that identifies this Deployment(object)
+  name: system-monitor      # Name of the Deployment 
+  labels:                   # Tags attached to the Deployment itself
+    app: system-monitor      # Label used to identify/group this app
+spec:                       # The desired state of the Deployment
+  replicas: 3                # Number of Pod copies to run at all times
+  selector:                  # Tells the Deployment which Pods it manages
+    matchLabels:
+      app: system-monitor
+  template:                  # Blueprint used to create each Pod
+    metadata:
+      labels:
+        app: system-monitor
+    spec:                      # Pod's own spec (what runs inside it)
+      containers:               # List of containers in this Pod 
+        - name: system-monitor    # Name of the container
+          image: system-monitor:v1  # Docker image to run (built locally, loaded into kind)
+          imagePullPolicy: Never     #  uses local image only
+          resources:                # Resource requests/limits for this container
+            requests:                 # Minimum resources guaranteed to the container
+              cpu: "50m"
+              memory: "64Mi"
+            limits:                   # Maximum resources the container can use
+              cpu: "200m"
+              memory: "128Mi"
