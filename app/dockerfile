@@ -1,0 +1,14 @@
+#taking a base image
+FROM python:3.11-slim
+
+#created a working directory
+WORKDIR /app
+
+#copied the file from local to the working directory
+COPY . .
+
+#this command install required tool top/free need procps
+RUN apt-get update && apt-get install -y procps coreutils 
+
+#finally running the app
+ENTRYPOINT ["./start.sh"]
