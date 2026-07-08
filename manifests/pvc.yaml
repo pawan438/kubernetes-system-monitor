@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim                   # Request for storage by a Pod
+metadata:
+  name: system-monitor-pvc                    # Name of the PVC
+spec:
+  storageClassName: ""                        # Must match PV's empty class to bind manually
+  volumeName: system-monitor-pv               # Explicitly request our specific PV
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi                          # Must be <= PV capacity
