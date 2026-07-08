@@ -1,7 +1,7 @@
 apiVersion: apps/v1        # Tells Kubernetes we're using the apps/v1 API (needed for Deployments)
 kind: Deployment           # We're creating a Deployment object (manages Pods + replicas)
 metadata:                  # Info that identifies this Deployment(object)
-  name: system-monitor      # Name of the Deployment 
+  name: system-monitor      # Name of the Deployment
   labels:                   # Tags attached to the Deployment itself
     app: system-monitor      # Label used to identify/group this app
 spec:                       # The desired state of the Deployment
@@ -14,10 +14,20 @@ spec:                       # The desired state of the Deployment
       labels:
         app: system-monitor
     spec:                      # Pod's own spec (what runs inside it)
-      containers:               # List of containers in this Pod 
+      containers:               # List of containers in this Pod
         - name: system-monitor    # Name of the container
-          image: system-monitor:v1  # Docker image to run (built locally, loaded into kind)
+          image: system-monitor:v2  # Docker image to run (built locally, loaded into kind)
           imagePullPolicy: Never     #  uses local image only
+          ports:
+            - containerPort: 8080     # Port the app listens on inside the container
+          envFrom:                   # Load env vars in bulk
+            - configMapRef:
+                name: system-monitor-config   # Non-sensitive config (LOG_FILE, THRESHOLD)
+            - secretRef:
+                name: system-monitor-secret   # Sensitive config (ALERT_WEBHOOK_TOKEN)
+          volumeMounts:
+            - name: data                      # Must match volumes[].name below
+              mountPath: /app/data             # Where the PVC is mounted inside the container
           resources:                # Resource requests/limits for this container
             requests:                 # Minimum resources guaranteed to the container
               cpu: "50m"
@@ -25,3 +35,19 @@ spec:                       # The desired state of the Deployment
             limits:                   # Maximum resources the container can use
               cpu: "200m"
               memory: "128Mi"
+          livenessProbe:                       # Restarts container if this fails repeatedly
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10             # Wait before first check (app needs to start)
+            periodSeconds: 15                   # How often to check
+          readinessProbe:                      # Removes pod from Service if this fails
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data                           # Named volume referenced in volumeMounts
+          persistentVolumeClaim:
+            claimName: system-monitor-pvc       # Links to the PVC we created
