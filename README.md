@@ -1,65 +1,99 @@
-# Kubernetes System Monitor
+# System Monitor — Kubernetes Deployment
 
-A containerized system health-check application deployed on Kubernetes.
-It checks CPU, RAM, and disk usage every 30 seconds and serves the results
-over HTTP.
+A bash-based health monitoring app that checks CPU, RAM, and disk usage against a threshold, logs results, and serves the log over HTTP. Originally built as a Docker container, now deployed as a production-style Kubernetes workload on a local `kind` cluster.
 
-## Project Structure
-kubernetes-system-monitor/
-├── app/                  # Application source
-│   ├── dockerfile         # Docker image definition
-│   ├── main.sh             # Core health-check logic (CPU/RAM/disk)
-│   └── start.sh             # Wrapper: loops main.sh + runs HTTP server
-├── manifests/            # Kubernetes manifests
-│   ├── deployment.yaml     # Deployment (3 replicas)
-│   └── service.yaml         # NodePort Service
-└── README.md              # This file
-## Application Flow
+## Architecture
 
-1. `start.sh` is the container's entrypoint. It does two things in parallel:
-   - Starts a Python HTTP server on port 8080, serving `health.log`
-   - Runs `main.sh` in a loop every 30 seconds
-2. `main.sh` checks CPU, RAM, and disk usage. If any exceed 85%, it logs a
-   CRITICAL message; otherwise it logs STATUS OKAY.
-3. Each check result is appended to `/app/health.log` inside the container.
-4. The Kubernetes Service exposes port 80 (routed to container port 8080),
-   so `health.log` can be viewed over HTTP.
-5. The Deployment runs 3 replicas. If a Pod is deleted or crashes,
-   Kubernetes automatically creates a new one to maintain 3 running Pods.
+The app runs as a single container per Pod:
+- `main.sh` performs the health checks (CPU/RAM/disk usage, log file error scan) every 30 seconds via a loop in `start.sh`.
+- A `python3 -m http.server` process runs alongside it in the same container, serving the `/app` directory (including the log file) over port 8080.
+- The Deployment manages **3 replicas** of this Pod, all behind a single NodePort Service (`system-monitor-service`) that load-balances traffic across them.
+## Storage Design
 
-## Deployment Instructions
+Health check output (`health.log`) needs to survive Pod restarts, so it's stored on a **PersistentVolume (PV)** rather than the container's writable layer.
 
-**1. Build the Docker image:**
+- `manifests/pv.yaml` — defines a `hostPath`-backed PV (100Mi) pointing at `/mnt/data/system-monitor` on the `kind` node. `hostPath` is used because this is a single-node local cluster; a real multi-node or cloud cluster would use a cloud-native storage class (e.g. EBS, Persistent Disk) instead.
+- `manifests/pvc.yaml` — a PersistentVolumeClaim that explicitly binds to `system-monitor-pv` by name (`volumeName`), rather than relying on `kind`'s default dynamic provisioner. This keeps the binding predictable and demonstrates manual PV/PVC wiring.
+- The PVC is mounted at `/app/data` inside the container. `LOG_FILE` is set to `/app/data/health.log` so all replicas write to the same persistent location.
+
+## Configuration Management
+
+Configuration is split by sensitivity, following Kubernetes best practice:
+
+- **ConfigMap** (`manifests/configmap.yaml`) holds non-sensitive settings:
+  - `LOG_FILE`: path to the health log
+  - `THRESHOLD`: CPU/RAM/disk warning threshold (%)
+- **Secret** (`manifests/secret.yaml`) holds sensitive values:
+  - `ALERT_WEBHOOK_TOKEN`: placeholder token for a future alerting integration
+
+Both are injected into the container as environment variables via `envFrom` in the Deployment, and `main.sh` reads them with safe defaults (e.g. `THRESHOLD="${THRESHOLD:-85}"`) so it still works if the env vars are missing.
+
+**Note:** the Secret in this repo uses a placeholder value for demonstration. In a real deployment, Secrets should never be committed to git — apply them directly with `kubectl` or manage them with a tool like Sealed Secrets or an external secrets manager.
+
+## Scaling Strategy
+
+The Deployment runs `replicas: 3` by default, with per-container resource requests/limits:
+- Requests: 50m CPU / 64Mi memory (guaranteed minimum)
+- Limits: 200m CPU / 128Mi memory (hard ceiling)
+
+This keeps each replica lightweight while preventing any single Pod from starving the node. Replica count can be adjusted with:
+
 ```bash
-cd app
-docker build -t system-monitor:v1 -f dockerfile .
+kubectl scale deployment system-monitor --replicas=<N>
 ```
 
-**2. Load the image into your kind cluster:**
-```bash
-kind load docker-image system-monitor:v1 --name <your-cluster-name>
-```
+**Health probes** ensure only healthy Pods receive traffic:
+- **Readiness probe** (`GET /` on port 8080): removes a Pod from the Service's routing pool if it stops responding, without killing it.
+- **Liveness probe** (`GET /` on port 8080): restarts the container if it becomes unresponsive.
 
-**3. Apply the manifests:**
+## Deployment Process
+
+Manifests are applied in dependency order — storage and config first, then the workload:
+
 ```bash
+kubectl apply -f manifests/pv.yaml
+kubectl apply -f manifests/pvc.yaml
+kubectl apply -f manifests/configmap.yaml
+kubectl apply -f manifests/secret.yaml
 kubectl apply -f manifests/deployment.yaml
 kubectl apply -f manifests/service.yaml
 ```
 
-**4. Verify Pods are running:**
+Check status:
+
 ```bash
 kubectl get pods
+kubectl get pv,pvc
+kubectl get svc
 ```
 
-**5. Access the health log (kind doesn't expose NodePorts to host by default):**
+Test the app (via port-forward, since NodePort isn't host-reachable on this `kind` setup):
+
 ```bash
 kubectl port-forward svc/system-monitor-service 8080:80
 curl http://localhost:8080/health.log
 ```
 
-**6. Test self-healing (delete a Pod, confirm it's replaced):**
+### Rolling Updates
+
+To deploy a new image version with zero downtime:
+
 ```bash
-kubectl get pods
-kubectl delete pod <pod-name>
-kubectl get pods
+# Build and load the new image into kind
+docker build -t system-monitor:v2 ./app
+kind load docker-image system-monitor:v2 --name system-monitor
+
+# Trigger the rolling update
+kubectl set image deployment/system-monitor system-monitor=system-monitor:v2
+
+# Watch the rollout
+kubectl rollout status deployment/system-monitor
+```
+
+Kubernetes replaces Pods one at a time by default, so the Service always has at least 2 healthy replicas available during the update — no downtime.
+
+To roll back if something goes wrong:
+
+```bash
+kubectl rollout undo deployment/system-monitor
 ```
