@@ -97,3 +97,54 @@ To roll back if something goes wrong:
 ```bash
 kubectl rollout undo deployment/system-monitor
 ```
+## Ingress Routing Configuration
+
+Routing is host-based: requests for `monitor.local` are matched and sent to
+`system-monitor-service` on port 80 (which forwards to the Pods' port 8080).
+
+\`\`\`yaml
+rules:
+  - host: monitor.local
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: system-monitor-service
+              port:
+                number: 80
+\`\`\`
+
+Path-based routing can be added by adding more entries under `paths`, e.g.
+routing `/api` to a different backend Service, without needing a new Ingress
+or a new external IP.
+## HTTPS / TLS Setup
+
+TLS is terminated at the Ingress Controller using a Kubernetes `Secret` of
+type `kubernetes.io/tls`.
+
+**For local development** (this repo currently uses this):
+\`\`\`bash
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout monitor.local.key \
+  -out monitor.local.crt \
+  -subj "/CN=monitor.local/O=system-monitor"
+
+kubectl create secret tls system-monitor-tls \
+  --cert=monitor.local.crt \
+  --key=monitor.local.key
+\`\`\`
+
+**For production**, replace the self-signed cert with a real one, typically
+automated via [cert-manager](https://cert-manager.io/) and Let's Encrypt —
+cert-manager watches Ingress resources and automatically requests, renews,
+and stores certificates as Secrets, so no manual cert generation is needed.
+
+The Ingress references the Secret like this:
+\`\`\`yaml
+tls:
+  - hosts:
+      - monitor.local
+    secretName: system-monitor-tls
+\`\`\`
