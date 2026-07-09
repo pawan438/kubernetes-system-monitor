@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: system-monitor-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /   # Ensures requests are forwarded to the Service root path
+    nginx.ingress.kubernetes.io/ssl-redirect: "true" # Forces HTTP requests to redirect to HTTPS
+spec:
+  ingressClassName: nginx        # Tells Kubernetes to use the ingress-nginx controller we installed
+  tls:                             # Enables HTTPS termination at the Ingress
+    - hosts:
+        - monitor.local               # Must match the host below
+      secretName: system-monitor-tls  # References the TLS Secret we just created
+  rules:
+    - host: monitor.local          # Host-based routing: only requests for this hostname match this rule
+      http:
+        paths:
+          - path: /                  # Path-based routing: matches everything under root
+            pathType: Prefix
+            backend:
+              service:
+                name: system-monitor-service  # Must match the Service name exactly
+                port:
+                  number: 80              # Must match the Service's port (not targetPort)
