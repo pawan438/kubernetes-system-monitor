@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: system-monitor-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: system-monitor-sa        # The identity we created in Step 1
+    namespace: default
+roleRef:
+  kind: Role
+  name: system-monitor-role         # Binds to the Role above
+  apiGroup: rbac.authorization.k8s.io

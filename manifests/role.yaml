@@ -1,0 +1,9 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: system-monitor-role
+rules:
+  - apiGroups: [""]              # "" means the core API group
+    resources: ["configmaps"]     # Only allowed to read ConfigMaps...
+    resourceNames: ["system-monitor-config"]  # ...and only this specific one
+    verbs: ["get"]                 # Read-only — no list, watch, create, update, or delete
