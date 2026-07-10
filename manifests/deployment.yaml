@@ -44,11 +44,12 @@ spec:
           envFrom:
             - configMapRef:
                 name: system-monitor-config
-            - secretRef:
-                name: system-monitor-secret
           volumeMounts:
             - name: data
               mountPath: /app/data
+            - name: secret-vol
+              mountPath: /app/secrets
+              readOnly: true
           resources:
             requests:
               cpu: "50m"
@@ -72,3 +73,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: system-monitor-pvc
+        - name: secret-vol
+          secret:
+            secretName: system-monitor-secret
