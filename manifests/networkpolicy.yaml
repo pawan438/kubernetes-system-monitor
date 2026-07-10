@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: system-monitor-netpol
+spec:
+  podSelector:
+    matchLabels:
+      app: system-monitor          # Applies to all system-monitor pods
+  policyTypes:
+    - Ingress                        # We're only restricting inbound traffic
+    - Egress                         # ...and outbound, for DNS below
+
+  ingress:
+    - from:
+        - namespaceSelector:            # Only allow traffic FROM the ingress-nginx namespace
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:                   # ...and specifically the controller pod within it
+            matchLabels:
+              app.kubernetes.io/component: controller
+      ports:
+        - protocol: TCP
+          port: 8080                     # Only on the app's actual port
+
+  egress:
+    - to:                              # Allow DNS lookups — required for the pod to resolve
+        - namespaceSelector: {}          # any hostnames (e.g. if ALERT_WEBHOOK_TOKEN is used
+      ports:                            # to call out to a webhook URl later)
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:                              # Allow outbound HTTPS, e.g. for the alert webhook
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
