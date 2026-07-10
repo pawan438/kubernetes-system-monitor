@@ -1,53 +1,74 @@
-apiVersion: apps/v1        # Tells Kubernetes we're using the apps/v1 API (needed for Deployments)
-kind: Deployment           # We're creating a Deployment object (manages Pods + replicas)
-metadata:                  # Info that identifies this Deployment(object)
-  name: system-monitor      # Name of the Deployment
-  labels:                   # Tags attached to the Deployment itself
-    app: system-monitor      # Label used to identify/group this app
-spec:                       # The desired state of the Deployment
-  replicas: 3                # Number of Pod copies to run at all times
-  selector:                  # Tells the Deployment which Pods it manages
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: system-monitor
+  labels:
+    app: system-monitor
+spec:
+  replicas: 3
+  selector:
     matchLabels:
       app: system-monitor
-  template:                  # Blueprint used to create each Pod
+  template:
     metadata:
       labels:
         app: system-monitor
-    spec:                      # Pod's own spec (what runs inside it)
-      containers:               # List of containers in this Pod
-        - name: system-monitor    # Name of the container
-          image: system-monitor:v2  # Docker image to run (built locally, loaded into kind)
-          imagePullPolicy: Never     #  uses local image only
-          ports:
-            - containerPort: 8080     # Port the app listens on inside the container
-          envFrom:                   # Load env vars in bulk
-            - configMapRef:
-                name: system-monitor-config   # Non-sensitive config (LOG_FILE, THRESHOLD)
-            - secretRef:
-                name: system-monitor-secret   # Sensitive config (ALERT_WEBHOOK_TOKEN)
+    spec:
+      serviceAccountName: system-monitor-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: fix-permissions
+          image: busybox:1.36
+          command: ["sh", "-c", "chown -R 1000:1000 /app/data"]
           volumeMounts:
-            - name: data                      # Must match volumes[].name below
-              mountPath: /app/data             # Where the PVC is mounted inside the container
-          resources:                # Resource requests/limits for this container
-            requests:                 # Minimum resources guaranteed to the container
+            - name: data
+              mountPath: /app/data
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+      containers:
+        - name: system-monitor
+          image: system-monitor:v2
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: system-monitor-config
+            - secretRef:
+                name: system-monitor-secret
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          resources:
+            requests:
               cpu: "50m"
               memory: "64Mi"
-            limits:                   # Maximum resources the container can use
+            limits:
               cpu: "200m"
               memory: "128Mi"
-          livenessProbe:                       # Restarts container if this fails repeatedly
+          livenessProbe:
             httpGet:
               path: /
               port: 8080
-            initialDelaySeconds: 10             # Wait before first check (app needs to start)
-            periodSeconds: 15                   # How often to check
-          readinessProbe:                      # Removes pod from Service if this fails
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
             httpGet:
               path: /
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
-        - name: data                           # Named volume referenced in volumeMounts
+        - name: data
           persistentVolumeClaim:
-            claimName: system-monitor-pvc       # Links to the PVC we created
+            claimName: system-monitor-pvc

@@ -1,14 +1,24 @@
-#taking a base image
+# taking a base image
 FROM python:3.11-slim
 
-#created a working directory
+# created a working directory
 WORKDIR /app
 
-#copied the file from local to the working directory
+# this command installs required tools: top/free need procps
+RUN apt-get update && apt-get install -y procps coreutils
+
+# copied the file from local to the working directory
 COPY . .
 
-#this command install required tool top/free need procps
-RUN apt-get update && apt-get install -y procps coreutils 
+# make sure the scripts are executable
+RUN chmod +x main.sh start.sh
 
-#finally running the app
+# create a dedicated non-root user (UID 1000, matching the Deployment's securityContext)
+# and hand ownership of /app to that user, since root currently owns everything from COPY
+RUN useradd -u 1000 -m appuser && chown -R appuser:appuser /app
+
+# switch to the non-root user for everything from here on
+USER appuser
+
+# finally running the app
 ENTRYPOINT ["./start.sh"]
