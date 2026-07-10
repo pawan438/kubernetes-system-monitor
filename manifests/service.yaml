@@ -3,10 +3,11 @@ kind: Service
 metadata:
   name: system-monitor-service  # Name of the Service
 spec:
-  type: NodePort               # Exposes the Service on a static port on each node
+  type: ClusterIP              # Internal-only — no longer exposed directly on the node.
+                                # External access now goes through the Ingress instead.
   selector:                    # Which Pods this Service routes traffic to
     app: system-monitor          # Must match the Pod label from the Deployment
   ports:
-    - port: 80                   # Port the Service itself listens on.
+    - port: 80                   # Port the Service itself listens on (inside the cluster)
       targetPort: 8080            # Port on the container that traffic gets forwarded to
-      nodePort: 30080              # External port exposed on the node 
+      # nodePort removed — ClusterIP services don't use nodePort
