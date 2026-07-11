@@ -1,0 +1,33 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: system-monitor-alerts
+  namespace: monitoring                      # Must be in the same namespace Prometheus watches
+  labels:
+    release: kube-prometheus-stack             # REQUIRED: matches the label the operator
+                                                 # uses to discover PrometheusRules — without
+                                                 # this, the rule is silently ignored
+spec:
+  groups:
+    - name: system-monitor.rules
+      rules:
+        - alert: SystemMonitorPodDown
+          expr: |
+            sum(kube_pod_status_phase{namespace="default", pod=~"system-monitor.*", phase="Running"}) < 3
+          for: 1m                                # Must stay true for 1 minute before firing
+                                                   # (avoids false alarms during normal rollouts)
+          labels:
+            severity: critical
+          annotations:
+            summary: "system-monitor pod unavailable"
+            description: "Fewer than 3 system-monitor pods are Running for over 1 minute."
+
+        - alert: SystemMonitorHighCPU
+          expr: |
+            sum(rate(container_cpu_usage_seconds_total{namespace="default", pod=~"system-monitor.*", container="system-monitor"}[5m])) > 0.15
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "system-monitor high CPU usage"
+            description: "system-monitor CPU usage has exceeded 0.15 cores (75% of its 200m limit) for over 2 minutes."
