@@ -1,101 +1,77 @@
-## Monitoring & Observability
+## Observability Architecture
 
-This project uses **Prometheus** and **Grafana**, installed via the
-`kube-prometheus-stack` Helm chart, for metrics collection and visualization.
-
-### Installation
-
-\`\`\`bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo update
-
-kubectl create namespace monitoring
-
-helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
-  --namespace monitoring
+\`\`\`mermaid
+graph TB
+    A[system-monitor Pods] -->|cAdvisor metrics| B[kubelet]
+    A -->|pod state| C[kube-state-metrics]
+    D[Cluster Nodes] -->|host metrics| E[node-exporter]
+    B --> F[Prometheus]
+    C --> F
+    E --> F
+    F -->|queried by| G[Grafana]
+    F -->|evaluates| H[PrometheusRule alerts]
+    H -->|fires to| I[Alertmanager]
 \`\`\`
 
-This installs Prometheus, Grafana, Alertmanager, node-exporter, and
-kube-state-metrics as a single bundled stack, with Grafana pre-configured
-to use Prometheus as a data source.
+Prometheus, Grafana, and Alertmanager are deployed together via the
+`kube-prometheus-stack` Helm chart (see `monitoring/prometheus-grafana-values.yaml`).
+`system-monitor` itself is not instrumented — all metrics come from
+Kubernetes-level sources (kubelet, kube-state-metrics, node-exporter),
+which is sufficient for infrastructure-level observability of a simple app.
 
-### Accessing the dashboards
+## Monitoring Workflow
 
-Both are ClusterIP by default (no external exposure, consistent with this
-project's security posture) — access locally via port-forward:
+1. Prometheus scrapes kubelet, kube-state-metrics, and node-exporter every
+   30s (see `monitoring/metrics-collection.md` for the full pipeline).
+2. Metrics are queried live via Grafana dashboards, or ad-hoc via the
+   Prometheus UI/API for one-off investigation.
+3. `PrometheusRule` alerts continuously evaluate against the same metrics
+   and fire to Alertmanager when thresholds are breached.
 
-\`\`\`bash
-kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
-kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
-\`\`\`
+## Logging Strategy
 
-Grafana admin password:
-\`\`\`bash
-kubectl get secret -n monitoring kube-prometheus-stack-grafana \
-  -o jsonpath="{.data.admin-password}" | base64 -d
-\`\`\`
+Application logs are handled two ways:
+- **Real-time**: `kubectl logs -l app=system-monitor` — pulled directly
+  from the container's stdout, which the health-check script writes to
+  in addition to its log file.
+- **Persistent**: the app also writes to `health.log` on its PVC
+  (`/app/data/health.log`), which survives pod restarts and is separate
+  from the ephemeral container logs `kubectl logs` shows.
 
-### Dashboards
+There's no centralized log aggregation (e.g. Loki, ELK) in this project —
+logs are checked per-pod via `kubectl logs`. This is a reasonable choice
+at this scale (3 replicas, one namespace); a log aggregator would become
+worthwhile if the app scaled to many pods/nodes where correlating logs
+across pods by hand becomes impractical.
 
-- **Kubernetes / Views / Global** (community dashboard ID 15757) — cluster-wide
-  CPU, RAM, and resource-count overview.
-- **system-monitor Overview** (custom, `grafana-dashboard-system-monitor.json`)
-  — CPU usage, memory usage, and live Pod status specifically for this app's
-  pods.
+## Alert Configuration
 
-### Application logs and events
-
-\`\`\`bash
-# Recent logs across all system-monitor pods
-kubectl logs -l app=system-monitor --tail=20
-
-# Recent cluster events, filtered to this app's pods
-kubectl get events --field-selector involvedObject.kind=Pod \
-  --sort-by='.lastTimestamp' | grep system-monitor
-\`\`\`
-
-### Alerting
-
-Two Prometheus alerts are defined in `prometheus-rules.yaml`:
+See `monitoring/prometheus-rules.yaml`. Two alerts are defined:
 
 | Alert | Condition | Severity |
 |---|---|---|
-| `SystemMonitorPodDown` | Fewer than 3 `system-monitor` pods `Running` for over 1 minute | critical |
-| `SystemMonitorHighCPU` | Combined CPU usage exceeds 0.15 cores (75% of the 200m limit) for over 2 minutes | warning |
+| `SystemMonitorPodDown` | Fewer than 3 pods `Running` for over 1 minute | critical |
+| `SystemMonitorHighCPU` | CPU usage exceeds 0.15 cores for over 2 minutes | warning |
 
-Apply with:
-\`\`\`bash
-kubectl apply -f prometheus-rules.yaml
-\`\`\`
+Both were verified via `curl http://localhost:9090/api/v1/rules` to be
+loaded and evaluating (`"health":"ok"`). The 1-minute debounce on pod-down
+is intentional — it's longer than the ~12 seconds a normal pod replacement
+takes, so only genuinely stuck failures page, not routine self-healing.
 
-Verify rules are loaded and evaluating:
-\`\`\`bash
-curl -s http://localhost:9090/api/v1/rules | grep -A2 SystemMonitor
-\`\`\`
-## Failure Simulation & Self-Healing
+## Dashboard Overview
 
-To verify observability end-to-end, a pod was deleted manually while the
-cluster was under normal load:
+- **Kubernetes / Views / Global** (community, ID 15757) — cluster-wide
+  CPU/RAM/resource-count overview, useful for spotting cluster-level
+  pressure unrelated to this specific app.
+- **system-monitor Overview** (custom, `monitoring/grafana-dashboard-system-monitor.json`)
+  — CPU usage, memory usage, and per-pod Running status, scoped
+  specifically to this app's 3 replicas.
 
-\`\`\`bash
-kubectl delete pod <system-monitor-pod-name>
-\`\`\`
+## Troubleshooting Workflow
 
-**Observed behavior:**
-1. Kubernetes Events showed `Killing` for the deleted pod, followed by
-   `Scheduled`, `Pulled`, `Created`, and `Started` for its replacement
-   — including the `fix-permissions` init container running again before
-   the main app container started.
-2. The replacement pod reached `1/1 Running` within ~12 seconds — fast
-   enough that the `SystemMonitorPodDown` alert (which requires a 1-minute
-   sustained gap) did not fire, demonstrating that the Deployment's
-   self-healing is faster than the alert's intentional debounce window.
-3. `kube_pod_status_phase` in Prometheus reflected the transition in
-   real time — the deleted pod's `Running` series dropped to `0`
-   while the new pod's `Running` series appeared at `1`.
-
-This confirms the monitoring stack captures Pod-level failures accurately,
-and that Kubernetes' own reconciliation loop handles recovery fast enough
-that end users would see no meaningful downtime with 3 replicas.
-
+See `monitoring/troubleshooting.md` for detailed, scenario-based
+investigation steps (pod crashes, high resource usage, missing replicas,
+Ingress connectivity). General approach: start with `kubectl get pods` +
+`kubectl describe pod` for anything not `Running`; use Prometheus/Grafana
+to confirm resource-related theories with real numbers; check
+`kubectl get events` for a timeline of what Kubernetes itself observed.
