@@ -1,0 +1,22 @@
+# Dev environment overrides — layered on top of values.yaml
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: "25m"
+    memory: "32Mi"
+  limits:
+    cpu: "100m"
+    memory: "64Mi"
+
+ingress:
+  hosts:
+    - host: monitor-dev.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - monitor-dev.local
+      secretName: system-monitor-tls

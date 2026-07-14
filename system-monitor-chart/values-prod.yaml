@@ -1,0 +1,22 @@
+# Production environment overrides — layered on top of values.yaml
+
+replicaCount: 5        # Higher availability for production
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+ingress:
+  hosts:
+    - host: monitor.example.com    # Placeholder — real domain in an actual prod setup
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - monitor.example.com
+      secretName: system-monitor-tls-prod
