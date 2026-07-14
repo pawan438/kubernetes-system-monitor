@@ -1,0 +1,111 @@
+# Default values for system-monitor-chart
+
+image:
+  repository: system-monitor
+  tag: v2
+  pullPolicy: Never
+
+replicaCount: 3
+
+config:
+  logFile: /app/data/health.log
+  threshold: "85"
+
+secret:
+  alertWebhookToken: "changeme-token-123"
+
+service:
+  type: ClusterIP
+  port: 80              # Service port
+  targetPort: 8080        # Container's actual listening port
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: monitor.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - monitor.local
+      secretName: system-monitor-tls    # Pre-created outside Helm — see README
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "200m"
+    memory: "128Mi"
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 15
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+initContainers:
+  - name: fix-permissions
+    image: busybox:1.36
+    command: ["sh", "-c", "chown -R 1000:1000 /app/data"]
+    securityContext:
+      runAsUser: 0
+      runAsNonRoot: false
+    volumeMounts:
+      - name: data
+        mountPath: /app/data
+
+volumeMounts:
+  - name: data
+    mountPath: /app/data
+
+volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: system-monitor-pvc
+
+persistence:
+  enabled: true
+  storageClassName: ""
+  accessMode: ReadWriteOnce
+  size: 100Mi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+autoscaling:
+  enabled: false
+imagePullSecrets: []
