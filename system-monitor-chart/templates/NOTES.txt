@@ -1,0 +1,23 @@
+system-monitor has been deployed.
+
+{{- if .Values.ingress.enabled }}
+Access the application via Ingress:
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+
+Note: make sure {{ (first .Values.ingress.hosts).host }} resolves to your
+cluster (e.g. via /etc/hosts), and that ingress-nginx is running.
+
+{{- else if contains "ClusterIP" .Values.service.type }}
+Access the application via port-forward:
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app=system-monitor" -o jsonpath="{.items[0].metadata.name}")
+  kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:{{ .Values.service.targetPort }}
+  echo "Visit http://127.0.0.1:8080"
+{{- end }}
+
+Check status:
+  kubectl get pods -l app=system-monitor --namespace {{ .Release.Namespace }}
+  helm status {{ .Release.Name }} --namespace {{ .Release.Namespace }}
